@@ -11,6 +11,7 @@ set -l sysver (uname -sr | string match -r "(Darwin) (\d\d)"\.)
 if test $status -eq 0 -a (count $sysver) -eq 3
     and test $sysver[2] = 'Darwin' -a $sysver[3] -ge 19
 
+    set -l dir
     if test -n "$XDG_CACHE_HOME"
         set dir $XDG_CACHE_HOME/fish
     else
@@ -26,7 +27,7 @@ if test $status -eq 0 -a (count $sysver) -eq 3
         # and override the MANPATH using that directory before we run `apropos`
         #
         # the cache is rebuilt once a week.
-        set -l whatis $cache/whatis
+        set -l whatis $dir/whatis
         set -l max_age 600000 # like a week
         set -l age $max_age
 
@@ -37,7 +38,7 @@ if test $status -eq 0 -a (count $sysver) -eq 3
             set age (math (date +%s) - (/usr/bin/stat -f %m $whatis))
         end
 
-        MANPATH="$dir" apropos -- "^$argv"
+        MANPATH="$dir" apropos "^$argv"
 
         if test $age -ge $max_age
             test -d "$dir" || mkdir -m 700 -p $dir

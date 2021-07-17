@@ -74,6 +74,8 @@ class fish_cmd_opts_t {
     std::vector<std::string> postconfig_cmds;
     /// Whether to print rusage-self stats after execution.
     bool print_rusage_self{false};
+    /// Whether no-config is set.
+    bool no_config{false};
     /// Whether no-exec is set.
     bool no_exec{false};
     /// Whether this is a login shell.
@@ -261,7 +263,7 @@ static int run_command_list(parser_t &parser, std::vector<std::string> *cmds,
 
 /// Parse the argument list, return the index of the first non-flag arguments.
 static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
-    static const char *const short_opts = "+hPilnvc:C:p:d:f:D:o:";
+    static const char *const short_opts = "+hPilNnvc:C:p:d:f:D:o:";
     static const struct option long_opts[] = {
         {"command", required_argument, nullptr, 'c'},
         {"init-command", required_argument, nullptr, 'C'},
@@ -271,6 +273,7 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
         {"debug-stack-frames", required_argument, nullptr, 'D'},
         {"interactive", no_argument, nullptr, 'i'},
         {"login", no_argument, nullptr, 'l'},
+        {"no-config", no_argument, nullptr, 'N'},
         {"no-execute", no_argument, nullptr, 'n'},
         {"print-rusage-self", no_argument, nullptr, 1},
         {"print-debug-categories", no_argument, nullptr, 2},
@@ -293,20 +296,10 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
                 break;
             }
             case 'd': {
-                char *end;
-                long tmp;
-
-                errno = 0;
-                tmp = strtol(optarg, &end, 10);
-
-                if (tmp >= 0 && tmp <= 10 && !*end && !errno) {
-                    debug_level = static_cast<int>(tmp);
-                } else {
-                    activate_flog_categories_by_pattern(str2wcstring(optarg));
-                }
+                activate_flog_categories_by_pattern(str2wcstring(optarg));
                 for (auto cat : get_flog_categories()) {
                     if (cat->enabled) {
-                        printf("Debug enabled for category: %ls\n", cat->name);
+                        std::fwprintf(stdout, L"Debug enabled for category: %ls\n", cat->name);
                     }
                 }
                 break;
@@ -329,6 +322,12 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
             }
             case 'l': {
                 opts->is_login = true;
+                break;
+            }
+            case 'N': {
+                opts->no_config = true;
+                // --no-config implies private mode, we won't be saving history
+                opts->enable_private_mode = true;
                 break;
             }
             case 'n': {
@@ -469,7 +468,9 @@ int main(int argc, char **argv) {
     // If we're not executing, there's no need to find the config.
     if (!opts.no_exec) {
         paths = determine_config_directory_paths(argv[0]);
-        env_init(&paths);
+    }
+    if (!opts.no_exec) {
+        env_init(&paths, /* do uvars */ !opts.no_config, /* default paths */ opts.no_config);
     }
 
     // Set features early in case other initialization depends on them.
@@ -486,12 +487,9 @@ int main(int argc, char **argv) {
     misc_init();
     reader_init();
 
-    // And now enable "job control" for everything.
-    set_job_control_mode(job_control_t::all);
-
     parser_t &parser = parser_t::principal_parser();
 
-    if (!opts.no_exec) {
+    if (!opts.no_exec && !opts.no_config) {
         read_init(parser, paths);
     }
     // Re-read the terminal modes after config, it might have changed them.
@@ -566,9 +564,7 @@ int main(int argc, char **argv) {
     }
 
     int exit_status = res ? STATUS_CMD_UNKNOWN : parser.get_last_status();
-
-    event_fire(parser,
-               proc_create_event(L"PROCESS_EXIT", event_type_t::exit, getpid(), exit_status));
+    event_fire(parser, event_t::process_exit(getpid(), exit_status));
 
     // Trigger any exit handlers.
     wcstring_list_t event_args = {to_string(exit_status)};

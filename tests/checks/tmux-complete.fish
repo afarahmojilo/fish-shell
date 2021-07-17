@@ -1,23 +1,20 @@
 #RUN: %fish -C 'set -g fish %fish' %s
 #REQUIRES: command -v tmux
-# Don't run this on GitHub Actions since it's flaky.
-#REQUIRES: test "$CI" != true
 
-# HACK: THIS IS DISABLED for now, since it doesn't work at the moment.
-#REQUIRES: false
-
-# Don't inflict relative XDG paths on tmux, or it will be confused.
-set -gx XDG_DATA_HOME (builtin realpath $XDG_DATA_HOME)
-set -gx XDG_CONFIG_HOME (builtin realpath $XDG_CONFIG_HOME)
+set fish (builtin realpath $fish)
 
 # Isolated tmux.
 set -g tmpdir (mktemp -d)
-set -g tmux tmux -S $tmpdir/.tmux-socket -f /dev/null
+
+# Don't CD elsewhere, because tmux socket file is relative to CWD. Using
+# absolute path to socket file is prone to 'socket file name too long' error.
+cd $tmpdir
+
+set -g tmux tmux -S .tmux-socket -f /dev/null
 
 set -g sleep sleep .1
+set -q CI && set sleep sleep 1
 
-set fish (builtin realpath $fish)
-cd $tmpdir
 
 $tmux new-session -x 80 -y 10 -d $fish -C '
     # This is similar to "tests/interactive.config".

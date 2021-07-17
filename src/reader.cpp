@@ -1313,6 +1313,10 @@ void reader_data_t::exec_prompt() {
     // may still be output on the line from the previous command (#2499) and we need our PROMPT_SP
     // hack to work.
     reader_write_title(L"", parser(), false);
+
+    // Some prompt may have requested an exit (#8033).
+    this->exit_loop_requested |= parser().libdata().exit_current_script;
+    parser().libdata().exit_current_script = false;
 }
 
 void reader_init() {
@@ -1588,9 +1592,9 @@ wcstring completion_apply_to_command_line(const wcstring &val, complete_flags_t 
         // Find the last quote in the token to complete. By parsing only the string inside any
         // command substitution, we prevent the tokenizer from treating the entire command
         // substitution as one token.
-        parse_util_get_parameter_info(
+        quote = parse_util_get_quote_type(
             command_line.substr(cmdsub_offset, (cmdsub_end - cmdsub_begin)),
-            cursor_pos - cmdsub_offset, &quote, nullptr, nullptr);
+            cursor_pos - cmdsub_offset);
 
         // If the token is reported as unquoted, but ends with a (unescaped) quote, and we can
         // modify the command line, then delete the trailing quote so that we can insert within
@@ -2939,8 +2943,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                 set_command_line_and_position(&command_line, L"", 0);
                 s_reset_abandoning_line(&screen, termsize_last().width - command_line.size());
 
-                // Post fish_cancel, allowing it to fire.
-                signal_clear_cancel();
+                // Post fish_cancel.
                 event_fire_generic(parser(), L"fish_cancel");
             }
             break;
@@ -3274,9 +3277,8 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                     text.pop_back();
                 }
 
-                if (history && !conf.in_silent_mode) {
+                if (!text.empty() && history && !conf.in_silent_mode) {
                     // Remove ephemeral items.
-                    // Note we fall into this case if the user just types a space and hits return.
                     history->remove_ephemeral_items();
 
                     // Mark this item as ephemeral if there is a leading space (#615).
@@ -3932,6 +3934,11 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
             }
         }
 
+        // If we ran `exit` anywhere, exit.
+        exit_loop_requested |= parser().libdata().exit_current_script;
+        parser().libdata().exit_current_script = false;
+        if (exit_loop_requested) continue;
+
         if (!event_needing_handling || event_needing_handling->is_check_exit()) {
             continue;
         } else if (event_needing_handling->is_eof()) {
@@ -3968,10 +3975,6 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
                 }
                 history_search.reset();
             }
-
-            // Readline commands may be bound to \cc which also sets the cancel flag.
-            // See #6937.
-            signal_clear_cancel();
 
             rls.last_cmd = readline_cmd;
         } else {
